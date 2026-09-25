@@ -281,7 +281,6 @@ with st.sidebar:
 
     if from_secrets:
         api_key = secret_key
-        st.success("API key loaded from Secrets ✓", icon="🔑")
     else:
         api_key = st.text_input(
             "Gemini API Key",
