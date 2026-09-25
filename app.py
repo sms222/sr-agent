@@ -402,7 +402,11 @@ if st.session_state.pico:
         else:
             st.error(verdict_text)
 
-    st.info("✅ Step 1 complete — PICO locked in. Step 2 (Search String Builder) coming next.")
+    st.divider()
+    col_a, col_b = st.columns([2, 1])
+    col_a.info("✅ Step 1 complete — PICO locked in.")
+    if col_b.button("Continue to Step 2 →", use_container_width=True, type="primary"):
+        st.switch_page("pages/2_Search_String_Builder.py")
     st.stop()
 
 # ── MCQ buttons (shown when Gemini offered options) ──────────
