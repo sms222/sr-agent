@@ -224,8 +224,23 @@ def send_message(user_text: str):
     st.session_state.messages.append({"role": "user", "content": user_text})
     st.session_state.pending_mcq = []   # clear pending options
 
-    response = st.session_state.chat.send_message(user_text)
-    reply    = response.text
+    try:
+        response = st.session_state.chat.send_message(user_text)
+        reply    = response.text
+    except Exception as e:
+        err = str(e).lower()
+        if "resourceexhausted" in err or "quota" in err or "429" in err:
+            # Remove the user message we just added — let them retry
+            st.session_state.messages.pop()
+            st.warning(
+                "⏳ Rate limit reached (10 requests/min on the free tier). "
+                "Wait 30 seconds and try again.",
+                icon="⏱️",
+            )
+        else:
+            st.session_state.messages.pop()
+            st.error(f"Gemini error: {e}")
+        return
 
     # Check confirmed PICO
     pico_marker = '{"status": "confirmed"'
