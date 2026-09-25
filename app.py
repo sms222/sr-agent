@@ -409,9 +409,8 @@ if st.session_state.pico:
 if st.session_state.pending_mcq:
     st.markdown('<div class="mcq-label">Choose an option or type your own below</div>',
                 unsafe_allow_html=True)
-    cols = st.columns(len(st.session_state.pending_mcq))
     for i, option in enumerate(st.session_state.pending_mcq):
-        if cols[i].button(option, key=f"mcq_{i}", use_container_width=True):
+        if st.button(option, key=f"mcq_{i}", use_container_width=True):
             with st.spinner(""):
                 send_message(option)
             st.rerun()
