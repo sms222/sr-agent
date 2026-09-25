@@ -151,8 +151,13 @@ MCQ_END   = "<<<END>>>"
 
 # ── Scope helpers ────────────────────────────────────────────
 def check_pubmed_scope(pico):
-    skip = {"status", "study_design", "formal_question"}
-    terms = [f'("{v}"[Title/Abstract])' for k, v in pico.items() if v and k not in skip]
+    skip_keys = {"status", "study_design", "formal_question"}
+    no_comp = {"none", "no comparator", "no intervention", "placebo", "n/a", "na", "not applicable", "no control"}
+    terms = [
+        v.strip() for k, v in pico.items()
+        if v and k not in skip_keys
+        and not (k == "C" and v.lower().strip() in no_comp)
+    ]
     query = " AND ".join(terms)
     try:
         r = requests.get(
@@ -165,8 +170,14 @@ def check_pubmed_scope(pico):
         return None, query
 
 def check_openalex_scope(pico):
-    skip = {"status", "study_design", "formal_question"}
-    query = " ".join(v for k, v in pico.items() if v and k not in skip)
+    skip_keys = {"status", "study_design", "formal_question"}
+    no_comp = {"none", "no comparator", "no intervention", "placebo", "n/a", "na", "not applicable", "no control"}
+    terms = [
+        v.strip() for k, v in pico.items()
+        if v and k not in skip_keys
+        and not (k == "C" and v.lower().strip() in no_comp)
+    ]
+    query = " ".join(terms)
     try:
         r = requests.get(
             "https://api.openalex.org/works",
