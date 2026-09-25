@@ -19,6 +19,8 @@ st.markdown("""
 
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
+h1, h2, h3 { font-family: 'Lora', serif; }
+
 .main-title {
     font-family: 'Lora', serif;
     font-size: 1.7rem;
@@ -44,9 +46,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     font-weight: 600;
     color: #0A3D2E;
     margin-bottom: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
 }
 .pico-row {
     display: flex;
@@ -98,6 +97,12 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     letter-spacing: 0.03em;
     margin-bottom: 0.5rem;
 }
+.mcq-label {
+    font-size: 0.75rem;
+    color: #64748B;
+    margin-bottom: 0.4rem;
+    margin-top: 0.75rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -119,21 +124,33 @@ Your task:
    - Animal / preclinical → note that SYRCLE will be used for appraisal later
    - Scoping reviews → PICOS with a broad scope framing
 4. Once all elements are clear, present a structured PICO summary for the user to confirm.
-5. When the user confirms (or approves with minor edits), output ONLY this JSON
+5. When the user confirms (or approves with minor edits), output ONLY the confirmed PICO JSON
    as the very last thing in your reply — nothing after it:
+   {"status": "confirmed", "P": "...", "I": "...", "C": "...", "O": "...", "study_design": "...", "formal_question": "..."}
 
-{"status": "confirmed", "P": "...", "I": "...", "C": "...", "O": "...", "study_design": "...", "formal_question": "..."}
+IMPORTANT — MCQ questions:
+When your clarifying question has 2–4 clear predefined answers (e.g. study design type,
+age group, yes/no, broad category choice), append this block at the very end of your message:
+<<<MCQ>>>{"question": "Short question label", "options": ["Option A", "Option B", "Option C", "Other (I'll type)"]}<<<END>>>
+
+Always include "Other (I'll type)" as the last MCQ option.
+For open-ended questions where free text is needed (e.g. specific drug names, outcome details),
+ask as plain text with NO MCQ block.
+Never output both an MCQ block and the confirmed PICO JSON in the same message.
 
 Rules:
-- Ask ONE question at a time — never bombard the user with a list.
+- Ask ONE question at a time — never a list.
 - Be conversational, concise, and encouraging.
-- If the question seems clearly too broad or narrow, flag it gently.
+- If the question seems too broad or narrow, flag it gently.
 - The formal_question must read as a complete, publication-ready research question.
-- Only output the JSON once the user has explicitly confirmed.
+- Only output the confirmed PICO JSON once the user has explicitly confirmed.
 """.strip()
 
+MCQ_START = "<<<MCQ>>>"
+MCQ_END   = "<<<END>>>"
+
 # ── Scope helpers ────────────────────────────────────────────
-def check_pubmed_scope(pico: dict) -> tuple:
+def check_pubmed_scope(pico):
     skip = {"status", "study_design", "formal_question"}
     terms = [f'("{v}"[Title/Abstract])' for k, v in pico.items() if v and k not in skip]
     query = " AND ".join(terms)
@@ -147,7 +164,7 @@ def check_pubmed_scope(pico: dict) -> tuple:
     except Exception:
         return None, query
 
-def check_openalex_scope(pico: dict):
+def check_openalex_scope(pico):
     skip = {"status", "study_design", "formal_question"}
     query = " ".join(v for k, v in pico.items() if v and k not in skip)
     try:
@@ -177,14 +194,80 @@ def scope_verdict(pubmed, openalex):
     else:
         return "🔴", "error", f"~{int(avg)} results on average — too broad. Narrow the question before proceeding."
 
+def parse_mcq(reply: str):
+    """Extract plain text + MCQ options from a reply, if present."""
+    if MCQ_START in reply and MCQ_END in reply:
+        start = reply.index(MCQ_START)
+        end   = reply.index(MCQ_END) + len(MCQ_END)
+        text  = reply[:start].strip()
+        raw   = reply[start + len(MCQ_START): reply.index(MCQ_END)].strip()
+        try:
+            mcq = json.loads(raw)
+            return text, mcq.get("options", [])
+        except Exception:
+            return reply, []
+    return reply, []
+
+def send_message(user_text: str):
+    """Send a message to Gemini, parse the reply, update session state."""
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    st.session_state.pending_mcq = []   # clear pending options
+
+    response = st.session_state.chat.send_message(user_text)
+    reply    = response.text
+
+    # Check confirmed PICO
+    pico_marker = '{"status": "confirmed"'
+    if pico_marker in reply:
+        json_start = reply.index(pico_marker)
+        preamble   = reply[:json_start].strip()
+        display    = preamble or "Your PICO is confirmed — here's the summary."
+        st.session_state.messages.append({"role": "assistant", "content": display})
+        try:
+            pico_result = json.loads(reply[json_start:])
+        except json.JSONDecodeError:
+            chunk = reply[json_start:]
+            pico_result = json.loads(chunk[: chunk.rfind("}") + 1])
+        st.session_state.pico = pico_result
+
+        # Scope check
+        pm_count, pm_query = check_pubmed_scope(pico_result)
+        oa_count           = check_openalex_scope(pico_result)
+        st.session_state.pm_count = pm_count
+        st.session_state.oa_count = oa_count
+        st.session_state.pm_query = pm_query
+        return
+
+    # Check MCQ
+    text, options = parse_mcq(reply)
+    if options:
+        st.session_state.messages.append({"role": "assistant", "content": text})
+        st.session_state.pending_mcq = options
+    else:
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+
+# ── API key resolution ───────────────────────────────────────
+# Priority: Streamlit Cloud secrets → sidebar input
+def get_api_key():
+    try:
+        key = st.secrets.get("GEMINI_API_KEY", "")
+        if key:
+            return key, True   # (key, from_secrets)
+    except Exception:
+        pass
+    return "", False
+
+secret_key, from_secrets = get_api_key()
+
 # ── Session state ────────────────────────────────────────────
 defaults = {
-    "messages": [],
-    "chat": None,
-    "pico": None,
-    "pm_count": None,
-    "oa_count": None,
-    "pm_query": None,
+    "messages":    [],
+    "chat":        None,
+    "pico":        None,
+    "pm_count":    None,
+    "oa_count":    None,
+    "pm_query":    None,
+    "pending_mcq": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -196,29 +279,41 @@ with st.sidebar:
     st.caption("AI-assisted systematic review pipeline")
     st.divider()
 
-    api_key = st.text_input(
-        "Gemini API Key",
-        type="password",
-        placeholder="AIza…",
-        help="Free key at aistudio.google.com/apikey",
-    )
-    st.caption(f"Model: `{MODEL_NAME}` · Free tier: 500 req/day")
+    if from_secrets:
+        api_key = secret_key
+        st.success("API key loaded from Secrets ✓", icon="🔑")
+    else:
+        api_key = st.text_input(
+            "Gemini API Key",
+            type="password",
+            placeholder="AIza…",
+            help="Get a free key at aistudio.google.com/apikey",
+        )
+        st.caption(
+            "To avoid entering this every time, add it to your app's "
+            "**Secrets** in the Streamlit Cloud dashboard:\n\n"
+            "```\nGEMINI_API_KEY = \"AIza...\"\n```"
+        )
 
+    st.caption(f"Model: `{MODEL_NAME}` · Free tier: 500 req/day")
     st.divider()
 
     steps = [
-        ("1", "PICO Refiner", True),
+        ("1", "PICO Refiner",         True),
         ("2", "Search String Builder", False),
-        ("3", "Abstract Screener", False),
-        ("4", "Quality Appraisal", False),
-        ("5", "Data Extraction", False),
+        ("3", "Abstract Screener",     False),
+        ("4", "Quality Appraisal",     False),
+        ("5", "Data Extraction",       False),
     ]
     st.markdown("**Pipeline**")
     for num, name, active in steps:
         if active:
             st.markdown(f"**→ Step {num}: {name}**")
         else:
-            st.markdown(f"<span style='color:#94A3B8'>Step {num}: {name}</span>", unsafe_allow_html=True)
+            st.markdown(
+                f"<span style='color:#94A3B8'>Step {num}: {name}</span>",
+                unsafe_allow_html=True,
+            )
 
     st.divider()
     if st.button("↺ Start over", use_container_width=True):
@@ -230,7 +325,8 @@ with st.sidebar:
 st.markdown('<div class="step-badge">Step 1 of 5</div>', unsafe_allow_html=True)
 st.markdown('<div class="main-title">Research Question Refiner</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="main-subtitle">Describe your research idea and the agent will refine it into a structured PICO.</div>',
+    '<div class="main-subtitle">Describe your research idea and the agent will '
+    'refine it into a structured PICO.</div>',
     unsafe_allow_html=True,
 )
 
@@ -241,7 +337,7 @@ if not api_key:
     )
     st.stop()
 
-# Configure Gemini and init chat
+# Configure Gemini and init chat once
 genai.configure(api_key=api_key)
 
 if st.session_state.chat is None:
@@ -256,19 +352,19 @@ if st.session_state.chat is None:
     )
     st.session_state.messages.append({"role": "assistant", "content": welcome})
 
-# Render chat history
+# ── Render chat history ──────────────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# PICO confirmed — show summary card + scope
+# ── PICO confirmed — show card + scope ───────────────────────
 if st.session_state.pico:
     pico = st.session_state.pico
     rows = [
-        ("P — Population", pico.get("P", "—")),
+        ("P — Population",   pico.get("P", "—")),
         ("I — Intervention", pico.get("I", "—")),
-        ("C — Comparator", pico.get("C", "—")),
-        ("O — Outcome", pico.get("O", "—")),
+        ("C — Comparator",   pico.get("C", "—")),
+        ("O — Outcome",      pico.get("O", "—")),
     ]
     if pico.get("study_design"):
         rows.append(("Study Design", pico["study_design"]))
@@ -280,71 +376,49 @@ if st.session_state.pico:
         f'</div>'
         for label, value in rows
     )
-    fq = pico.get("formal_question", "")
-
     st.markdown(f"""
     <div class="pico-card">
         <div class="pico-card-title">✅ Confirmed PICO</div>
         {rows_html}
-        <div class="formal-q">{fq}</div>
+        <div class="formal-q">{pico.get('formal_question', '')}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Scope check
     pm, oa = st.session_state.pm_count, st.session_state.oa_count
     if pm is not None or oa is not None:
         st.markdown("**Scope check**")
         col1, col2, col3 = st.columns(3)
-        col1.metric("PubMed hits", f"{pm:,}" if pm is not None else "—")
+        col1.metric("PubMed hits",   f"{pm:,}" if pm is not None else "—")
         col2.metric("OpenAlex hits", f"{oa:,}" if oa is not None else "—")
-        emoji, kind, msg_text = scope_verdict(pm, oa)
+        emoji, kind, verdict_text = scope_verdict(pm, oa)
         with col3:
-            st.markdown(f"<div class='scope-label'>Verdict</div>{emoji}", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='scope-label'>Verdict</div>{emoji}",
+                unsafe_allow_html=True,
+            )
         if kind == "success":
-            st.success(msg_text)
+            st.success(verdict_text)
         elif kind == "warning":
-            st.warning(msg_text)
+            st.warning(verdict_text)
         else:
-            st.error(msg_text)
+            st.error(verdict_text)
 
-    st.info("✅ Step 1 complete — PICO is locked in. Step 2 (Search String Builder) coming next.")
+    st.info("✅ Step 1 complete — PICO locked in. Step 2 (Search String Builder) coming next.")
     st.stop()
 
-# Chat input — only shown while PICO is not yet confirmed
-if prompt := st.chat_input("Describe your research idea…"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        with st.spinner(""):
-            response = st.session_state.chat.send_message(prompt)
-            reply = response.text
-
-        marker = '{"status": "confirmed"'
-        if marker in reply:
-            json_start = reply.index(marker)
-            preamble = reply[:json_start].strip()
-            display = preamble or "Your PICO is confirmed — here's the summary."
-            st.markdown(display)
-            st.session_state.messages.append({"role": "assistant", "content": display})
-
-            try:
-                pico_result = json.loads(reply[json_start:])
-            except json.JSONDecodeError:
-                chunk = reply[json_start:]
-                pico_result = json.loads(chunk[: chunk.rfind("}") + 1])
-
-            st.session_state.pico = pico_result
-
-            with st.spinner("Running scope check against PubMed and OpenAlex…"):
-                pm_count, pm_query = check_pubmed_scope(pico_result)
-                oa_count = check_openalex_scope(pico_result)
-                st.session_state.pm_count = pm_count
-                st.session_state.oa_count = oa_count
-                st.session_state.pm_query = pm_query
-
+# ── MCQ buttons (shown when Gemini offered options) ──────────
+if st.session_state.pending_mcq:
+    st.markdown('<div class="mcq-label">Choose an option or type your own below</div>',
+                unsafe_allow_html=True)
+    cols = st.columns(len(st.session_state.pending_mcq))
+    for i, option in enumerate(st.session_state.pending_mcq):
+        if cols[i].button(option, key=f"mcq_{i}", use_container_width=True):
+            with st.spinner(""):
+                send_message(option)
             st.rerun()
-        else:
-            st.markdown(reply)
-            st.session_state.messages.append({"role": "assistant", "content": reply})
+
+# ── Free-text chat input ─────────────────────────────────────
+if prompt := st.chat_input("Describe your research idea or type your answer…"):
+    with st.spinner(""):
+        send_message(prompt)
+    st.rerun()
