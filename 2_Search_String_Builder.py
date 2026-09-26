@@ -378,4 +378,7 @@ Only change the strings affected by the instruction — keep others identical.
 
 # ── Continue ─────────────────────────────────────────────────
 st.divider()
-st.info("✅ Step 2 complete — once you have your Scopus and WOS exports ready, continue to Step 3: Abstract Screener.")
+col_a, col_b = st.columns([2,1])
+col_a.info("✅ Step 2 complete — have your Scopus & WOS exports ready for Step 3.")
+if col_b.button("Continue to Step 3 →", use_container_width=True, type="primary"):
+    st.switch_page("pages/3_Abstract_Screener.py")
