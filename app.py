@@ -210,17 +210,23 @@ def send_message(user_text: str) -> bool:
 
     st.session_state.conversation_history.append({"role":"assistant","content":reply})
 
-    # Confirmed PICO?
-    marker = '{"status": "confirmed"'
-    if marker in reply:
-        json_start = reply.index(marker)
-        preamble   = reply[:json_start].strip()
-        st.session_state.messages.append({"role":"assistant","content": preamble or "PICO confirmed."})
+    # Confirmed PICO? Match regardless of spacing in JSON
+    import re as _re
+    _match = _re.search(r'\{[^{]*"status"\s*:\s*"confirmed"', reply)
+    if _match:
+        json_start = _match.start()
         try:
             pico_result = json.loads(reply[json_start:])
         except json.JSONDecodeError:
             chunk = reply[json_start:]
             pico_result = json.loads(chunk[:chunk.rfind("}")+1])
+        fq = pico_result.get("formal_question", "")
+        display = (
+            "Based on your responses, the suggested research question is:\n\n"
+            f"*{fq}*\n\n"
+            "Review the PICO summary below. When ready, continue to Step 2."
+        )
+        st.session_state.messages.append({"role":"assistant","content": display})
         st.session_state.pico = pico_result
         pm, pmq = check_pubmed_scope(pico_result)
         oa      = check_openalex_scope(pico_result)
