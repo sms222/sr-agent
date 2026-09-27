@@ -97,15 +97,14 @@ Steps:
 4. On confirmation, output ONLY this JSON as the last thing in your reply:
    {"status": "confirmed", "P": "...", "I": "...", "C": "...", "O": "...", "study_design": "...", "formal_question": "..."}
 
-MCQ rule: When your question has 2–4 clear predefined options, append this block at the end:
-<<<MCQ>>>{"question": "label", "options": ["A", "B", "C", "Other (I'll type)"]}<<<END>>>
-Always include "Other (I'll type)" as last option. No MCQ for open-ended questions.
-Never combine MCQ block and confirmed PICO JSON in the same message.
+MCQ rule: When your question has 2–4 clear predefined options, end your message with exactly this format on a new line:
+OPTIONS: ["Option A", "Option B", "Option C", "Other (I'll type)"]
+Always include "Other (I'll type)" as the last item. No OPTIONS line for open-ended questions (specific drug names, outcome details).
+Never combine an OPTIONS line and the confirmed PICO JSON in the same message.
 The formal_question must be a complete, publication-ready research question.
 Output the confirmed JSON only once the user has explicitly confirmed."""
 
-MCQ_START = "<<<MCQ>>>"
-MCQ_END   = "<<<END>>>"
+MCQ_PREFIX = "OPTIONS:"
 
 # ── LLM abstraction ──────────────────────────────────────────
 def call_llm(history: list, provider_key: str, api_key: str) -> str:
@@ -176,14 +175,17 @@ def scope_verdict(pm, oa):
     else:           return "🔴","error",  f"~{int(avg)} results — too broad."
 
 def parse_mcq(reply: str):
-    if MCQ_START in reply and MCQ_END in reply:
-        start = reply.index(MCQ_START)
-        text  = reply[:start].strip()
-        raw   = reply[start+len(MCQ_START): reply.index(MCQ_END)].strip()
+    """Detect OPTIONS: ["A","B","C"] line anywhere in the reply."""
+    import re as _re
+    m = _re.search(r'OPTIONS:\s*(\[.*?\])', reply, _re.IGNORECASE | _re.DOTALL)
+    if m:
+        text = reply[:m.start()].strip()
         try:
-            return text, json.loads(raw).get("options",[])
+            options = json.loads(m.group(1))
+            if isinstance(options, list) and options:
+                return text, options
         except Exception:
-            return reply, []
+            pass
     return reply, []
 
 # ── send_message ─────────────────────────────────────────────
