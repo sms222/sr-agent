@@ -97,10 +97,17 @@ Steps:
 4. On confirmation, output ONLY this JSON as the last thing in your reply:
    {"status": "confirmed", "P": "...", "I": "...", "C": "...", "O": "...", "study_design": "...", "formal_question": "..."}
 
-MCQ rule: When your question has 2–4 clear predefined options, end your message with exactly this format on a new line:
+MCQ rule — MANDATORY for these question types:
+- Population category (human/animal/cell line/mixed) → ALWAYS use OPTIONS
+- Study design (RCT/cohort/qualitative/animal/all) → ALWAYS use OPTIONS
+- Yes/no questions about comparator → ALWAYS use OPTIONS
+- Intervention form when 2-4 clear categories exist (e.g. extract/compound/specific dose) → use OPTIONS
+- Open-ended questions where free text is needed (specific drug names, exact doses, outcome biomarker names) → plain text only, NO OPTIONS
+
+When using OPTIONS, end your message with exactly this format on its own line:
 OPTIONS: ["Option A", "Option B", "Option C", "Other (I'll type)"]
-Always include "Other (I'll type)" as the last item. No OPTIONS line for open-ended questions (specific drug names, outcome details).
-Never combine an OPTIONS line and the confirmed PICO JSON in the same message.
+Always include "Other (I'll type)" as the last item.
+Never combine OPTIONS and the confirmed PICO JSON in the same message.
 The formal_question must be a complete, publication-ready research question.
 Output the confirmed JSON only once the user has explicitly confirmed."""
 
@@ -264,6 +271,7 @@ defaults = {
     "oa_count":             None,
     "pm_query":             None,
     "pending_mcq":          [],
+    "_custom_input":         False,
     "_err":                 None,
     "selected_provider":    DEFAULT_PROVIDER,
     "active_api_key":       "",
@@ -399,10 +407,31 @@ if st.session_state.pico:
 # MCQ buttons
 if st.session_state.pending_mcq:
     st.markdown('<div class="mcq-label">Choose an option or type your own below</div>', unsafe_allow_html=True)
-    for i, option in enumerate(st.session_state.pending_mcq):
-        if st.button(option, key=f"mcq_{i}", use_container_width=True):
-            send_message(option)
+
+    if st.session_state.get("_custom_input"):
+        # User clicked "Other" — show a text box with examples
+        st.caption("Type your own answer:")
+        custom = st.text_input("", key="custom_mcq_text", label_visibility="collapsed",
+                               placeholder="e.g. crude extract, specific dose, all preparations…")
+        c1, c2 = st.columns([3, 1])
+        if c1.button("Submit", key="submit_custom", use_container_width=True, type="primary"):
+            if custom.strip():
+                st.session_state._custom_input = False
+                st.session_state.pending_mcq = []
+                send_message(custom.strip())
+                st.rerun()
+        if c2.button("Back", key="cancel_custom", use_container_width=True):
+            st.session_state._custom_input = False
             st.rerun()
+    else:
+        for i, option in enumerate(st.session_state.pending_mcq):
+            if st.button(option, key=f"mcq_{i}", use_container_width=True):
+                if option.lower().startswith("other"):
+                    st.session_state._custom_input = True
+                    st.rerun()
+                else:
+                    send_message(option)
+                    st.rerun()
 
 # Chat input
 if prompt := st.chat_input("Type your research idea or answer…"):
