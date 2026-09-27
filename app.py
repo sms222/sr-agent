@@ -14,20 +14,20 @@ st.set_page_config(
 # ── Provider / model registry ────────────────────────────────
 PROVIDERS = {
     "groq_llama33": {
-        "label":      "Llama 3.3 70B · Groq",
+        "label":      "GPT OSS 120B · Groq",
         "provider":   "Groq",
-        "model_id":   "llama-3.3-70b-versatile",
-        "limits":     "30 RPM · 14,400/day",
+        "model_id":   "openai/gpt-oss-120b",
+        "limits":     "30 RPM · 1,000/day",
         "secret_key": "GROQ_API_KEY",
         "base_url":   "https://api.groq.com/openai/v1",
         "type":       "openai_compat",
         "badge":      "#6366F1",
     },
     "groq_llama4": {
-        "label":      "Llama 4 Scout · Groq",
+        "label":      "Qwen 3.6 27B · Groq",
         "provider":   "Groq",
-        "model_id":   "meta-llama/llama-4-scout-17b-16e-instruct",
-        "limits":     "30 RPM · 14,400/day",
+        "model_id":   "qwen/qwen3.6-27b",
+        "limits":     "30 RPM · 1,000/day",
         "secret_key": "GROQ_API_KEY",
         "base_url":   "https://api.groq.com/openai/v1",
         "type":       "openai_compat",
