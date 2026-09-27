@@ -381,10 +381,17 @@ if st.session_state.pico:
         getattr(st, kind)(vtext)
 
     st.divider()
-    ca,cb = st.columns([2,1])
-    ca.info("✅ Step 1 complete — PICO locked in.")
-    if cb.button("Continue to Step 2 →", use_container_width=True, type="primary"):
-        st.switch_page("pages/2_Search_String_Builder.py")
+    st.markdown("**Does this look right?**")
+    col_edit, col_cont = st.columns(2)
+    if col_edit.button("✏️ Edit PICO", use_container_width=True):
+        st.session_state.pico = None
+        st.session_state.messages.append({"role": "assistant", "content": "What would you like to change?"})
+        st.rerun()
+    if col_cont.button("✅ Continue to Step 2 →", use_container_width=True, type="primary"):
+        try:
+            st.switch_page("pages/2_Search_String_Builder.py")
+        except Exception:
+            st.error("Page not found — make sure pages/2_Search_String_Builder.py is pushed to your GitHub repo.")
     st.stop()
 
 # MCQ buttons
